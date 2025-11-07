@@ -1,8 +1,18 @@
+# Dependency folders
 node_modules/
 dist/
+
+# Environment and credentials
 .env
-.vscode/
 serviceAccountKey.json
 serviceAccountKeys.js
+
+# Editor and config files
+.vscode/
+
+# Ignore HTML test/demo files
 index.html
 index1.html
+
+# Ignore all text files
+*.txt
