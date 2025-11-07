@@ -1,0 +1,708 @@
+# Payment Implementation & Testing Guide
+
+## 🎯 PAYMENT FLOW STRATEGY
+
+### **Option 1: Razorpay Route Transfer (RECOMMENDED)**
+Money flows: **User → Platform (Your Razorpay Account) → Admin (Auto-transfer)**
+
+### **Option 2: Direct Payment (Complex)**
+Money flows: **User → Admin's Razorpay Account directly**
+
+---
+
+## 📋 RECOMMENDED APPROACH: Razorpay Route Transfer
+
+### **Why this approach?**
+✅ Easy to implement and test  
+✅ Platform can take commission automatically  
+✅ Better control over payments  
+✅ Easier refund management  
+✅ Admin doesn't need Razorpay account initially  
+
+---
+
+## 🔧 IMPLEMENTATION STEPS
+
+### **Step 1: Setup Razorpay Account**
+
+1. Go to https://razorpay.com
+2. Sign up (Test Mode is FREE)
+3. Get your API Keys:
+   - Key ID: `rzp_test_xxxxx`
+   - Key Secret: `xxxxx`
+
+---
+
+### **Step 2: Install Razorpay SDK**
+
+```bash
+npm install razorpay
+```
+
+---
+
+### **Step 3: Backend Payment Service**
+
+Create: `services/payment.service.js`
+
+```javascript
+const Razorpay = require('razorpay');
+const crypto = require('crypto');
+
+// Initialize Razorpay
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET
+});
+
+// Create Order
+exports.createOrder = async (amount, bookingId) => {
+  try {
+    const options = {
+      amount: amount * 100, // Amount in paise (₹500 = 50000 paise)
+      currency: 'INR',
+      receipt: `booking_${bookingId}`,
+      notes: {
+        bookingId: bookingId
+      }
+    };
+
+    const order = await razorpay.orders.create(options);
+    return {
+      success: true,
+      orderId: order.id,
+      amount: order.amount,
+      currency: order.currency
+    };
+  } catch (error) {
+    console.error('Razorpay order creation failed:', error);
+    throw new Error('Payment order creation failed');
+  }
+};
+
+// Verify Payment Signature
+exports.verifyPayment = (orderId, paymentId, signature) => {
+  const generatedSignature = crypto
+    .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+    .update(`${orderId}|${paymentId}`)
+    .digest('hex');
+
+  return generatedSignature === signature;
+};
+
+// Create Transfer to Admin (Route Transfer)
+exports.transferToAdmin = async (paymentId, amount, adminAccount) => {
+  try {
+    // Admin account should have linkedAccountId from Razorpay
+    const transfer = await razorpay.transfers.create({
+      amount: amount * 100, // Amount in paise
+      currency: 'INR',
+      source: paymentId, // Payment ID from user payment
+      account: adminAccount.linkedAccountId, // Admin's linked account
+      notes: {
+        transfer_type: 'admin_payout'
+      }
+    });
+
+    return {
+      success: true,
+      transferId: transfer.id
+    };
+  } catch (error) {
+    console.error('Transfer to admin failed:', error);
+    throw new Error('Transfer failed');
+  }
+};
+```
+
+---
+
+### **Step 4: Booking Controller with Payment**
+
+Create: `controllers/booking.controller.js`
+
+```javascript
+const Booking = require('../models/Booking.model');
+const Transaction = require('../models/Transaction.model');
+const Box = require('../models/Box.model');
+const paymentService = require('../services/payment.service');
+
+// Create Booking
+exports.createBooking = async (req, res) => {
+  try {
+    const { boxId, courtNumber, bookingDate, startTime, endTime, participants } = req.body;
+    const userId = req.user.id; // From auth middleware
+
+    // 1. Get Box details
+    const box = await Box.findById(boxId).populate('owner');
+    if (!box) {
+      return res.status(404).json({ success: false, message: 'Box not found' });
+    }
+
+    // 2. Check if admin is verified
+    if (!box.owner.isVerified) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'This box owner is not verified yet' 
+      });
+    }
+
+    // 3. Calculate duration and amount
+    const duration = calculateDuration(startTime, endTime);
+    const totalAmount = box.pricePerHour * duration;
+    
+    // Platform fee (e.g., 10%)
+    const platformFee = totalAmount * 0.10;
+    const adminReceives = totalAmount - platformFee;
+
+    // 4. Create Booking
+    const booking = new Booking({
+      box: boxId,
+      courtNumber,
+      bookedBy: userId,
+      boxOwner: box.owner._id,
+      participants: participants || [],
+      bookingDate,
+      startTime,
+      endTime,
+      duration,
+      pricePerHour: box.pricePerHour,
+      totalAmount,
+      finalAmount: totalAmount,
+      payment: {
+        status: 'pending',
+        paidToAdmin: box.owner._id
+      }
+    });
+
+    await booking.save();
+
+    // 5. Create Razorpay Order
+    const order = await paymentService.createOrder(totalAmount, booking._id);
+
+    // 6. Return response
+    res.status(201).json({
+      success: true,
+      message: 'Booking created. Please complete payment.',
+      booking: {
+        id: booking._id,
+        totalAmount,
+        duration,
+        status: booking.status
+      },
+      payment: {
+        orderId: order.orderId,
+        amount: order.amount,
+        currency: order.currency,
+        razorpayKey: process.env.RAZORPAY_KEY_ID
+      }
+    });
+
+  } catch (error) {
+    console.error('Create booking error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// Confirm Payment
+exports.confirmPayment = async (req, res) => {
+  try {
+    const { bookingId, paymentId, orderId, signature } = req.body;
+
+    // 1. Verify payment signature
+    const isValid = paymentService.verifyPayment(orderId, paymentId, signature);
+    
+    if (!isValid) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid payment signature' 
+      });
+    }
+
+    // 2. Get booking
+    const booking = await Booking.findById(bookingId).populate('boxOwner');
+    if (!booking) {
+      return res.status(404).json({ success: false, message: 'Booking not found' });
+    }
+
+    // 3. Update booking payment status
+    await booking.confirmPayment({
+      paymentId,
+      orderId,
+      paymentMethod: 'razorpay'
+    });
+
+    // 4. Create Transaction
+    const platformFee = booking.totalAmount * 0.10;
+    const adminReceives = booking.totalAmount - platformFee;
+
+    const transaction = new Transaction({
+      booking: bookingId,
+      from: booking.bookedBy,
+      to: booking.boxOwner._id,
+      amount: booking.totalAmount,
+      transactionType: 'booking_payment',
+      status: 'completed',
+      paymentGateway: 'razorpay',
+      gatewayTransactionId: paymentId,
+      gatewayOrderId: orderId,
+      platformFee,
+      adminReceives,
+      paymentMethod: 'razorpay',
+      completedAt: new Date()
+    });
+
+    await transaction.save();
+
+    // 5. TODO: Transfer money to admin (if using Route Transfer)
+    // For now, we'll handle this manually or via webhooks
+
+    // 6. Send notifications (implement later)
+    // await sendNotification(...)
+
+    res.status(200).json({
+      success: true,
+      message: 'Payment successful! Booking confirmed.',
+      booking: {
+        id: booking._id,
+        status: booking.status,
+        paymentStatus: booking.payment.status
+      },
+      transaction: {
+        id: transaction._id,
+        amount: transaction.amount,
+        adminReceives: transaction.adminReceives
+      }
+    });
+
+  } catch (error) {
+    console.error('Confirm payment error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// Helper function
+function calculateDuration(startTime, endTime) {
+  const [startHour, startMin] = startTime.split(':').map(Number);
+  const [endHour, endMin] = endTime.split(':').map(Number);
+  
+  const startInMinutes = startHour * 60 + startMin;
+  const endInMinutes = endHour * 60 + endMin;
+  
+  return (endInMinutes - startInMinutes) / 60; // Duration in hours
+}
+
+module.exports = exports;
+```
+
+---
+
+### **Step 5: Frontend Implementation**
+
+```javascript
+// Frontend: Create Booking & Open Razorpay Checkout
+
+const createBooking = async (bookingData) => {
+  try {
+    // 1. Create booking
+    const response = await fetch('/api/bookings/create', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify(bookingData)
+    });
+
+    const data = await response.json();
+
+    if (data.success) {
+      // 2. Open Razorpay Checkout
+      const options = {
+        key: data.payment.razorpayKey,
+        amount: data.payment.amount,
+        currency: data.payment.currency,
+        order_id: data.payment.orderId,
+        name: 'Cricket Box Booking',
+        description: 'Booking Payment',
+        
+        handler: async function (response) {
+          // 3. Payment successful - confirm on backend
+          await confirmPayment({
+            bookingId: data.booking.id,
+            paymentId: response.razorpay_payment_id,
+            orderId: response.razorpay_order_id,
+            signature: response.razorpay_signature
+          });
+        },
+        
+        prefill: {
+          name: user.name,
+          email: user.email,
+          contact: user.phoneNumber
+        },
+        
+        theme: {
+          color: '#3399cc'
+        }
+      };
+
+      const razorpay = new Razorpay(options);
+      razorpay.open();
+    }
+
+  } catch (error) {
+    console.error('Booking error:', error);
+    alert('Booking failed!');
+  }
+};
+
+const confirmPayment = async (paymentData) => {
+  try {
+    const response = await fetch('/api/bookings/confirm-payment', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify(paymentData)
+    });
+
+    const data = await response.json();
+
+    if (data.success) {
+      alert('Booking confirmed! Payment successful.');
+      // Redirect to booking details page
+      window.location.href = `/bookings/${data.booking.id}`;
+    }
+
+  } catch (error) {
+    console.error('Payment confirmation error:', error);
+  }
+};
+```
+
+---
+
+## 🧪 TESTING WITHOUT REAL USERS
+
+### **Method 1: Seed Test Data**
+
+Create: `scripts/seedTestData.js`
+
+```javascript
+const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
+const { User, Admin, Box } = require('../models');
+
+const seedTestData = async () => {
+  try {
+    // Connect to DB
+    await mongoose.connect(process.env.MONGODB_URI);
+
+    // 1. Create Test User
+    const testUser = new User({
+      name: 'Test User',
+      email: 'testuser@example.com',
+      password: await bcrypt.hash('password123', 10),
+      phoneNumber: '9876543210',
+      role: 'user',
+      isVerified: true,
+      nickname: 'testuser',
+      location: {
+        type: 'Point',
+        coordinates: [70.7887104, 22.28224]
+      }
+    });
+    await testUser.save();
+    console.log('✅ Test User created');
+
+    // 2. Create Test Admin
+    const testAdmin = new Admin({
+      name: 'Test Admin',
+      email: 'testadmin@example.com',
+      password: await bcrypt.hash('password123', 10),
+      phoneNumber: '9876543211',
+      role: 'admin',
+      isVerified: true,
+      isApproved: true,
+      businessName: 'Test Cricket Arena',
+      businessAddress: {
+        street: 'MG Road',
+        city: 'Rajkot',
+        state: 'Gujarat',
+        pincode: '360001',
+        fullAddress: 'MG Road, Rajkot, Gujarat',
+        location: {
+          type: 'Point',
+          coordinates: [70.7887104, 22.28224]
+        }
+      },
+      paymentDetails: {
+        upiId: 'testadmin@upi',
+        accountHolderName: 'Test Admin',
+        accountNumber: '1234567890',
+        ifscCode: 'SBIN0001234',
+        bankName: 'State Bank of India',
+        preferredMethod: 'upi'
+      }
+    });
+    await testAdmin.save();
+    console.log('✅ Test Admin created');
+
+    // 3. Create Test Box
+    const testBox = new Box({
+      name: 'Test Cricket Box',
+      description: 'Best cricket box for testing',
+      owner: testAdmin._id,
+      location: {
+        type: 'Point',
+        coordinates: [70.7887104, 22.28224]
+      },
+      address: {
+        street: 'MG Road',
+        city: 'Rajkot',
+        state: 'Gujarat',
+        pincode: '360001',
+        fullAddress: 'MG Road, Rajkot, Gujarat'
+      },
+      pricePerHour: 500,
+      courts: [
+        {
+          courtNumber: 1,
+          courtName: 'Court A',
+          surfaceType: 'artificial_turf',
+          isAvailable: true
+        }
+      ],
+      amenities: [
+        { name: 'Parking', available: true },
+        { name: 'Washroom', available: true }
+      ],
+      operatingHours: {
+        monday: { open: '06:00', close: '22:00', isClosed: false },
+        tuesday: { open: '06:00', close: '22:00', isClosed: false },
+        wednesday: { open: '06:00', close: '22:00', isClosed: false },
+        thursday: { open: '06:00', close: '22:00', isClosed: false },
+        friday: { open: '06:00', close: '22:00', isClosed: false },
+        saturday: { open: '06:00', close: '22:00', isClosed: false },
+        sunday: { open: '06:00', close: '22:00', isClosed: false }
+      },
+      isActive: true
+    });
+    await testBox.save();
+    console.log('✅ Test Box created');
+
+    console.log('\n📋 Test Credentials:');
+    console.log('User Email: testuser@example.com');
+    console.log('Admin Email: testadmin@example.com');
+    console.log('Password (both): password123');
+    console.log('\nBox ID:', testBox._id);
+
+    process.exit(0);
+  } catch (error) {
+    console.error('Seed error:', error);
+    process.exit(1);
+  }
+};
+
+seedTestData();
+```
+
+Run: `node scripts/seedTestData.js`
+
+---
+
+### **Method 2: Razorpay Test Mode**
+
+Razorpay provides **Test Cards** for testing:
+
+#### **Test Card Numbers:**
+```
+Card Number: 4111 1111 1111 1111
+CVV: Any 3 digits
+Expiry: Any future date
+```
+
+#### **Test UPI:**
+```
+UPI ID: success@razorpay
+Status: Payment will succeed
+```
+
+```
+UPI ID: failure@razorpay
+Status: Payment will fail
+```
+
+#### **Test Modes:**
+- All test payments use `rzp_test_` keys
+- No real money is charged
+- Perfect for development
+
+---
+
+## 🔄 COMPLETE TESTING FLOW
+
+### **Step-by-Step:**
+
+1. **Seed test data:**
+```bash
+node scripts/seedTestData.js
+```
+
+2. **Login as Test User:**
+```
+POST /api/auth/login
+{
+  "email": "testuser@example.com",
+  "password": "password123"
+}
+```
+
+3. **Search Nearby Boxes:**
+```
+GET /api/boxes/nearby?lat=22.28224&lng=70.7887104
+```
+
+4. **Create Booking:**
+```
+POST /api/bookings/create
+{
+  "boxId": "box_id_from_step_3",
+  "courtNumber": 1,
+  "bookingDate": "2025-11-01",
+  "startTime": "09:00",
+  "endTime": "11:00"
+}
+```
+
+5. **Frontend opens Razorpay Checkout**
+
+6. **Use Test Card/UPI to pay**
+
+7. **Razorpay calls your handler**
+
+8. **Backend confirms payment**
+
+9. **Booking confirmed! ✅**
+
+---
+
+## 💰 PAYMENT OPTIONS COMPARISON
+
+### **Option A: Platform as Intermediary (RECOMMENDED)**
+```
+User pays ₹1000
+  ↓
+Platform receives ₹1000
+  ↓
+Platform keeps ₹100 (10% commission)
+  ↓
+Platform transfers ₹900 to Admin
+```
+
+**Pros:**
+- Easy to implement
+- Better control
+- Can take commission
+- Admin doesn't need Razorpay account
+
+**Cons:**
+- Need to handle payouts manually
+
+---
+
+### **Option B: Direct to Admin (Advanced)**
+```
+User pays ₹1000 → Goes directly to Admin's Razorpay account
+```
+
+**Pros:**
+- Instant settlement to admin
+- No payout management
+
+**Cons:**
+- Each admin needs Razorpay account
+- Complex onboarding
+- Harder to take commission
+
+---
+
+## 🎯 RECOMMENDED FOR YOUR APP
+
+**Use Option A (Platform as Intermediary)**
+
+**Steps:**
+1. Create your Razorpay account (Test mode)
+2. User books and pays to YOUR Razorpay account
+3. Store admin's UPI/Bank details in database
+4. Later: Manually transfer money to admin OR use Razorpay Payouts API
+5. Take your commission (10-15%)
+
+**For now:** Don't worry about transferring to admin. Just focus on:
+- User booking
+- Payment via Razorpay
+- Storing transaction records
+- Admin can see earnings in dashboard
+
+Later you can add:
+- Automated payouts using Razorpay Payouts API
+- Or manual bank transfers
+
+---
+
+## 📝 ENVIRONMENT VARIABLES
+
+Create `.env` file:
+
+```env
+# MongoDB
+MONGODB_URI=mongodb://localhost:27017/cricket-booking
+
+# JWT
+JWT_SECRET=your_jwt_secret_key_here
+
+# Razorpay (Test Mode)
+RAZORPAY_KEY_ID=rzp_test_xxxxxxxxxxxxxx
+RAZORPAY_KEY_SECRET=xxxxxxxxxxxxxxxxxxxxxx
+
+# Server
+PORT=5000
+NODE_ENV=development
+```
+
+---
+
+## ✅ TESTING CHECKLIST
+
+- [ ] Create test user and admin via seed script
+- [ ] Login as user
+- [ ] Search nearby boxes
+- [ ] Create booking
+- [ ] Razorpay checkout opens
+- [ ] Pay using test card (4111 1111 1111 1111)
+- [ ] Payment success handler called
+- [ ] Backend verifies signature
+- [ ] Booking status = 'confirmed'
+- [ ] Transaction record created
+- [ ] Check database for booking & transaction
+
+---
+
+## 🚀 NEXT STEPS
+
+1. **Implement this basic flow first**
+2. **Test thoroughly with test cards**
+3. **Add admin dashboard to see earnings**
+4. **Later: Add Razorpay Payouts for auto-transfer to admin**
+
+**For MVP, you don't need actual admin payouts - just show earnings in dashboard!**
+
+---
+
+## 📞 NEED HELP?
+
+- Razorpay Docs: https://razorpay.com/docs/
+- Test Cards: https://razorpay.com/docs/payments/test-card-details/
+- Integration Guide: https://razorpay.com/docs/payments/payment-gateway/

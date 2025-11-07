@@ -1,0 +1,396 @@
+// ==================== USER MODEL ====================
+const userSchema = new Schema({
+  // Common fields
+  name: { type: String, required: true },
+  email: { type: String, required: true, unique: true, lowercase: true },
+  password: { type: String, required: true },
+  phoneNumber: { type: String, required: true },
+  nickname: { type: String, unique: true, sparse: true }, // For friend system
+  
+  // Verification fields
+  isVerified: { type: Boolean, default: false },
+  verificationToken: String,
+  resetToken: String,
+  otp: String,
+  otpExpires: Date,
+  
+  // Role management
+  role: { 
+    type: String, 
+    enum: ['user', 'admin'], 
+    default: 'user' 
+  },
+  
+  // Friends system
+  friends: [{ 
+    type: Schema.Types.ObjectId, 
+    ref: 'User' 
+  }],
+  friendRequests: [{
+    from: { type: Schema.Types.ObjectId, ref: 'User' },
+    status: { type: String, enum: ['pending', 'accepted', 'rejected'], default: 'pending' },
+    createdAt: { type: Date, default: Date.now }
+  }],
+  
+  // Additional user fields
+  profilePicture: String,
+  preferences: {
+    favoriteBoxes: [{ type: Schema.Types.ObjectId, ref: 'Box' }],
+    playerPosition: String, // batsman, bowler, all-rounder
+    skillLevel: { type: String, enum: ['beginner', 'intermediate', 'advanced'] }
+  }
+}, { timestamps: true });
+
+// ==================== BOX/TURF MODEL ====================
+const boxSchema = new Schema({
+  // Admin who owns this box
+  admin: { 
+    type: Schema.Types.ObjectId, 
+    ref: 'User', 
+    required: true 
+  },
+  
+  // Basic info
+  name: { type: String, required: true },
+  description: String,
+  images: [String],
+  
+  // Location (from Google API or manual)
+  location: {
+    address: { type: String, required: true },
+    city: String,
+    state: String,
+    coordinates: {
+      lat: Number,
+      lng: Number
+    },
+    placeId: String // Google Places ID if available
+  },
+  
+  // Turf/Court details
+  courts: [{
+    courtNumber: { type: Number, required: true },
+    name: String, // e.g., "Court A", "Main Ground"
+    surfaceType: { type: String, enum: ['turf', 'cement', 'matting'] },
+    size: String, // e.g., "40x60 feet"
+    isActive: { type: Boolean, default: true }
+  }],
+  
+  // Pricing
+  pricing: {
+    pricePerHour: { type: Number, required: true },
+    weekendPricePerHour: Number,
+    peakHourPrice: Number,
+    currency: { type: String, default: 'INR' }
+  },
+  
+  // Amenities
+  amenities: [{
+    type: String,
+    enum: [
+      'Parking', 'Washroom', 'Changing Room', 'First Aid', 
+      'Drinking Water', 'Seating Area', 'Lighting', 'Scoreboard',
+      'Equipment Rental', 'Cafeteria', 'WiFi'
+    ]
+  }],
+  
+  // Availability settings
+  availability: {
+    operatingHours: [{
+      day: { 
+        type: String, 
+        enum: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] 
+      },
+      openTime: String, // "06:00"
+      closeTime: String, // "22:00"
+      isClosed: { type: Boolean, default: false }
+    }],
+    advanceBookingDays: { type: Number, default: 7 }, // How many days in advance can book
+    minimumBookingHours: { type: Number, default: 1 },
+    slotDuration: { type: Number, default: 60 } // in minutes
+  },
+  
+  // Rules & policies
+  rules: [String],
+  cancellationPolicy: String,
+  
+  // Admin verification - only verified admins' boxes are bookable
+  isAdminVerified: { type: Boolean, default: false },
+  
+  // Stats
+  rating: { type: Number, default: 0, min: 0, max: 5 },
+  totalBookings: { type: Number, default: 0 },
+  isActive: { type: Boolean, default: true }
+}, { timestamps: true });
+
+// ==================== BOOKING MODEL ====================
+const bookingSchema = new Schema({
+  // Who booked
+  bookedBy: { 
+    type: Schema.Types.ObjectId, 
+    ref: 'User', 
+    required: true 
+  },
+  
+  // Where
+  box: { 
+    type: Schema.Types.ObjectId, 
+    ref: 'Box', 
+    required: true 
+  },
+  courtNumber: { type: Number, required: true },
+  
+  // When
+  bookingDate: { type: Date, required: true },
+  startTime: { type: String, required: true }, // "14:00"
+  endTime: { type: String, required: true }, // "16:00"
+  duration: { type: Number, required: true }, // hours
+  
+  // Friends invited to this booking
+  participants: [{
+    user: { type: Schema.Types.ObjectId, ref: 'User' },
+    status: { 
+      type: String, 
+      enum: ['invited', 'confirmed', 'declined'], 
+      default: 'invited' 
+    }
+  }],
+  
+  // Payment details
+  payment: {
+    totalAmount: { type: Number, required: true },
+    paymentStatus: { 
+      type: String, 
+      enum: ['pending', 'completed', 'failed', 'refunded'], 
+      default: 'pending' 
+    },
+    paymentMethod: String, // 'UPI', 'Card', 'Wallet'
+    transactionId: String,
+    paidAt: Date
+  },
+  
+  // Group expense tracking (Splitwise-like)
+  expense: { 
+    type: Schema.Types.ObjectId, 
+    ref: 'Expense' 
+  },
+  
+  // Booking status
+  status: {
+    type: String,
+    enum: ['pending', 'confirmed', 'cancelled', 'completed'],
+    default: 'pending'
+  },
+  
+  // Additional info
+  notes: String,
+  cancellationReason: String,
+  cancelledAt: Date
+}, { timestamps: true });
+
+// ==================== EXPENSE MODEL (Splitwise-like) ====================
+const expenseSchema = new Schema({
+  booking: { 
+    type: Schema.Types.ObjectId, 
+    ref: 'Booking', 
+    required: true 
+  },
+  
+  totalAmount: { type: Number, required: true },
+  
+  // Who paid what
+  payments: [{
+    paidBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    amount: { type: Number, required: true },
+    paidAt: { type: Date, default: Date.now }
+  }],
+  
+  // How to split
+  splitType: {
+    type: String,
+    enum: ['equal', 'custom', 'percentage'],
+    default: 'equal'
+  },
+  
+  // Individual shares
+  shares: [{
+    user: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    shareAmount: { type: Number, required: true },
+    paid: { type: Number, default: 0 },
+    status: { 
+      type: String, 
+      enum: ['pending', 'settled'], 
+      default: 'pending' 
+    }
+  }],
+  
+  // Settlements between users
+  settlements: [{
+    from: { type: Schema.Types.ObjectId, ref: 'User' },
+    to: { type: Schema.Types.ObjectId, ref: 'User' },
+    amount: Number,
+    settledAt: Date,
+    transactionId: String
+  }],
+  
+  isSettled: { type: Boolean, default: false }
+}, { timestamps: true });
+
+// ==================== PLAYER FINDER MODEL ====================
+const playerFinderSchema = new Schema({
+  // Posted by
+  createdBy: { 
+    type: Schema.Types.ObjectId, 
+    ref: 'User', 
+    required: true 
+  },
+  
+  // Match details
+  booking: { 
+    type: Schema.Types.ObjectId, 
+    ref: 'Booking' 
+  },
+  
+  matchDate: { type: Date, required: true },
+  matchTime: String,
+  location: {
+    box: { type: Schema.Types.ObjectId, ref: 'Box' },
+    customLocation: String
+  },
+  
+  // Requirements
+  playersNeeded: { type: Number, required: true },
+  positionsNeeded: [{
+    position: String, // 'batsman', 'bowler', 'all-rounder', 'wicket-keeper'
+    count: Number
+  }],
+  skillLevel: {
+    type: String,
+    enum: ['beginner', 'intermediate', 'advanced', 'any']
+  },
+  
+  // Interested players
+  applications: [{
+    user: { type: Schema.Types.ObjectId, ref: 'User' },
+    message: String,
+    status: { 
+      type: String, 
+      enum: ['pending', 'accepted', 'rejected'], 
+      default: 'pending' 
+    },
+    appliedAt: { type: Date, default: Date.now }
+  }],
+  
+  // Additional info
+  description: String,
+  matchType: { type: String, enum: ['casual', 'competitive'] },
+  fee: Number, // If any cost per player
+  
+  status: {
+    type: String,
+    enum: ['open', 'closed', 'cancelled'],
+    default: 'open'
+  },
+  
+  expiresAt: Date
+}, { timestamps: true });
+
+// ==================== REVIEW MODEL ====================
+const reviewSchema = new Schema({
+  box: { 
+    type: Schema.Types.ObjectId, 
+    ref: 'Box', 
+    required: true 
+  },
+  user: { 
+    type: Schema.Types.ObjectId, 
+    ref: 'User', 
+    required: true 
+  },
+  booking: { 
+    type: Schema.Types.ObjectId, 
+    ref: 'Booking' 
+  },
+  
+  rating: { 
+    type: Number, 
+    required: true, 
+    min: 1, 
+    max: 5 
+  },
+  review: String,
+  images: [String],
+  
+  // Response from admin
+  adminResponse: {
+    message: String,
+    respondedAt: Date
+  }
+}, { timestamps: true });
+
+// ==================== NOTIFICATION MODEL ====================
+const notificationSchema = new Schema({
+  user: { 
+    type: Schema.Types.ObjectId, 
+    ref: 'User', 
+    required: true 
+  },
+  
+  type: {
+    type: String,
+    enum: [
+      'booking_confirmed', 'booking_cancelled', 'payment_received',
+      'friend_request', 'friend_accepted', 'expense_settled',
+      'player_application', 'match_invitation', 'reminder'
+    ],
+    required: true
+  },
+  
+  title: String,
+  message: String,
+  
+  // Related data
+  relatedBooking: { type: Schema.Types.ObjectId, ref: 'Booking' },
+  relatedUser: { type: Schema.Types.ObjectId, ref: 'User' },
+  relatedExpense: { type: Schema.Types.ObjectId, ref: 'Expense' },
+  
+  isRead: { type: Boolean, default: false },
+  readAt: Date
+}, { timestamps: true });
+
+// ==================== INDEXES FOR PERFORMANCE ====================
+// User indexes
+userSchema.index({ email: 1 });
+userSchema.index({ nickname: 1 });
+userSchema.index({ role: 1 });
+
+// Box indexes
+boxSchema.index({ admin: 1 });
+boxSchema.index({ 'location.coordinates': '2dsphere' }); // For geo queries
+boxSchema.index({ isAdminVerified: 1, isActive: 1 });
+
+// Booking indexes
+bookingSchema.index({ bookedBy: 1, bookingDate: -1 });
+bookingSchema.index({ box: 1, bookingDate: 1 });
+bookingSchema.index({ status: 1 });
+
+// Expense indexes
+expenseSchema.index({ booking: 1 });
+expenseSchema.index({ 'shares.user': 1, isSettled: 1 });
+
+// Player Finder indexes
+playerFinderSchema.index({ matchDate: 1, status: 1 });
+playerFinderSchema.index({ createdBy: 1 });
+
+// Notification indexes
+notificationSchema.index({ user: 1, isRead: 1, createdAt: -1 });
+
+module.exports = {
+  User: mongoose.model('User', userSchema),
+  Box: mongoose.model('Box', boxSchema),
+  Booking: mongoose.model('Booking', bookingSchema),
+  Expense: mongoose.model('Expense', expenseSchema),
+  PlayerFinder: mongoose.model('PlayerFinder', playerFinderSchema),
+  Review: mongoose.model('Review', reviewSchema),
+  Notification: mongoose.model('Notification', notificationSchema)
+};

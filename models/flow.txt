@@ -1,0 +1,947 @@
+# Cricket Booking App - Complete Flow & API Endpoints
+
+## 🎯 APP FLOW OVERVIEW
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    1. REGISTRATION & LOGIN                   │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+                    ┌─────────────────┐
+                    │ Choose Role:    │
+                    │ • User          │
+                    │ • Admin         │
+                    └─────────────────┘
+                              ↓
+                    Email Verification
+                              ↓
+                ┌─────────────┴─────────────┐
+                ↓                           ↓
+        USER FLOW                    ADMIN FLOW
+```
+
+---
+
+## 📱 COMPLETE USER FLOW
+
+### **1. User Registration & Setup**
+```
+Register → Email Verification → Add Nickname → Enable Location → Dashboard
+```
+
+### **2. Find & Book Turf**
+```
+Search Nearby Boxes → Select Box → Choose Date/Time → Add Friends → Pay → Booking Confirmed
+```
+
+### **3. Split Payment with Friends**
+```
+Booking Done → Create Split Group → Friends See Split → Friends Pay Back
+```
+
+### **4. Find Players (Optional)**
+```
+Need Players → Create Player Request → Other Users Join → Match Ready
+```
+
+---
+
+## 🏢 COMPLETE ADMIN FLOW
+
+### **1. Admin Registration & Setup**
+```
+Register as Admin → Email Verification → Add Business Details → Add Payment Info → Approved
+```
+
+### **2. Create Box**
+```
+Add Box Details → Add Courts → Set Pricing → Set Operating Hours → Add Amenities → Publish
+```
+
+### **3. Manage Bookings**
+```
+View Bookings → Confirm/Cancel → Receive Payments → View Reviews
+```
+
+---
+
+# 🔌 API ENDPOINTS
+
+## 1️⃣ AUTHENTICATION
+
+### **Register User/Admin**
+```http
+POST /api/auth/register
+Content-Type: application/json
+
+{
+  "name": "John Doe",
+  "email": "john@example.com",
+  "password": "password123",
+  "phoneNumber": "9876543210",
+  "role": "user" // or "admin"
+}
+
+Response (201):
+{
+  "success": true,
+  "message": "Registration successful. Please verify your email.",
+  "data": {
+    "userId": "user123",
+    "email": "john@example.com",
+    "role": "user"
+  }
+}
+```
+
+### **Verify Email**
+```http
+GET /api/auth/verify-email?token={verificationToken}
+
+Response (200):
+{
+  "success": true,
+  "message": "Email verified successfully",
+  "data": {
+    "userId": "user123",
+    "isVerified": true
+  }
+}
+```
+
+### **Login**
+```http
+POST /api/auth/login
+Content-Type: application/json
+
+{
+  "email": "john@example.com",
+  "password": "password123"
+}
+
+Response (200):
+{
+  "success": true,
+  "token": "jwt_token_here",
+  "user": {
+    "id": "user123",
+    "name": "John Doe",
+    "email": "john@example.com",
+    "role": "user",
+    "isVerified": true
+  }
+}
+```
+
+### **OAuth Login (Google)**
+```http
+POST /api/auth/google
+Content-Type: application/json
+
+{
+  "googleToken": "google_oauth_token",
+  "role": "user" // User selects role
+}
+
+Response (200):
+{
+  "success": true,
+  "token": "jwt_token_here",
+  "user": {...}
+}
+```
+
+---
+
+## 2️⃣ USER ENDPOINTS
+
+### **Update Profile**
+```http
+PUT /api/user/profile
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "nickname": "johnny_cricket",
+  "location": {
+    "coordinates": [70.7887104, 22.28224] // [lng, lat]
+  }
+}
+
+Response (200):
+{
+  "success": true,
+  "message": "Profile updated",
+  "data": {...}
+}
+```
+
+### **Search Friends by Nickname**
+```http
+GET /api/user/search-friends?nickname=johnny
+
+Response (200):
+{
+  "success": true,
+  "users": [
+    {
+      "id": "user456",
+      "name": "Johnny",
+      "nickname": "johnny_cricket"
+    }
+  ]
+}
+```
+
+### **Send Friend Request**
+```http
+POST /api/user/friend-request
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "toUserId": "user456"
+}
+
+Response (201):
+{
+  "success": true,
+  "message": "Friend request sent"
+}
+```
+
+### **Accept Friend Request**
+```http
+POST /api/user/friend-request/accept
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "requestId": "req123"
+}
+
+Response (200):
+{
+  "success": true,
+  "message": "Friend request accepted"
+}
+```
+
+### **Get My Friends**
+```http
+GET /api/user/friends
+Authorization: Bearer {token}
+
+Response (200):
+{
+  "success": true,
+  "friends": [
+    {
+      "id": "user456",
+      "name": "Johnny",
+      "nickname": "johnny_cricket",
+      "phoneNumber": "9876543210"
+    }
+  ]
+}
+```
+
+---
+
+## 3️⃣ BOX/TURF ENDPOINTS
+
+### **Search Nearby Boxes**
+```http
+GET /api/boxes/nearby?lat=22.28224&lng=70.7887104&radius=5000
+Authorization: Bearer {token}
+
+Response (200):
+{
+  "success": true,
+  "boxes": [
+    {
+      "id": "box123",
+      "name": "Champion Cricket Box",
+      "pricePerHour": 500,
+      "distance": 2.5, // km
+      "averageRating": 4.5,
+      "images": ["url1", "url2"],
+      "amenities": ["Parking", "Washroom", "Lighting"],
+      "owner": {
+        "name": "Admin Name",
+        "phoneNumber": "9876543210",
+        "isVerified": true
+      }
+    }
+  ]
+}
+```
+
+### **Get Box Details**
+```http
+GET /api/boxes/{boxId}
+Authorization: Bearer {token}
+
+Response (200):
+{
+  "success": true,
+  "box": {
+    "id": "box123",
+    "name": "Champion Cricket Box",
+    "description": "Best turf in the city",
+    "pricePerHour": 500,
+    "courts": [
+      {
+        "courtNumber": 1,
+        "courtName": "Court A",
+        "surfaceType": "Artificial turf",
+        "isAvailable": true
+      }
+    ],
+    "operatingHours": {
+      "monday": { "open": "06:00", "close": "22:00" }
+      // ... other days
+    },
+    "amenities": [...],
+    "owner": {
+      "name": "Admin Name",
+      "phoneNumber": "9876543210"
+    },
+    "reviews": [...]
+  }
+}
+```
+
+### **Check Availability**
+```http
+GET /api/boxes/{boxId}/availability?date=2025-11-01&courtNumber=1
+Authorization: Bearer {token}
+
+Response (200):
+{
+  "success": true,
+  "availableSlots": [
+    { "startTime": "06:00", "endTime": "08:00" },
+    { "startTime": "10:00", "endTime": "12:00" },
+    { "startTime": "14:00", "endTime": "16:00" }
+  ],
+  "bookedSlots": [
+    { "startTime": "08:00", "endTime": "10:00" }
+  ]
+}
+```
+
+---
+
+## 4️⃣ BOOKING ENDPOINTS
+
+### **Create Booking**
+```http
+POST /api/bookings/create
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "boxId": "box123",
+  "courtNumber": 1,
+  "bookingDate": "2025-11-01",
+  "startTime": "09:00",
+  "endTime": "11:00",
+  "participants": ["user456", "user789"] // optional friends
+}
+
+Response (201):
+{
+  "success": true,
+  "booking": {
+    "id": "booking123",
+    "totalAmount": 1000,
+    "duration": 2,
+    "status": "pending"
+  },
+  "paymentOrder": {
+    "orderId": "order_xyz",
+    "amount": 1000,
+    "currency": "INR",
+    "razorpayKey": "rzp_key_xxx"
+  }
+}
+```
+
+### **Confirm Payment (After Razorpay Success)**
+```http
+POST /api/bookings/confirm-payment
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "bookingId": "booking123",
+  "paymentId": "pay_xyz",
+  "orderId": "order_xyz",
+  "signature": "razorpay_signature"
+}
+
+Response (200):
+{
+  "success": true,
+  "message": "Payment successful. Booking confirmed!",
+  "booking": {
+    "id": "booking123",
+    "status": "confirmed",
+    "payment": {
+      "status": "completed",
+      "completedAt": "2025-10-29T10:30:00Z"
+    }
+  },
+  "transaction": {
+    "id": "txn123",
+    "from": "user123",
+    "to": "admin456",
+    "amount": 1000,
+    "status": "completed"
+  }
+}
+```
+
+### **Get My Bookings**
+```http
+GET /api/bookings/my-bookings?status=confirmed
+Authorization: Bearer {token}
+
+Response (200):
+{
+  "success": true,
+  "bookings": [
+    {
+      "id": "booking123",
+      "box": {
+        "name": "Champion Cricket Box",
+        "address": "..."
+      },
+      "bookingDate": "2025-11-01",
+      "startTime": "09:00",
+      "endTime": "11:00",
+      "totalAmount": 1000,
+      "status": "confirmed",
+      "participants": [...]
+    }
+  ]
+}
+```
+
+### **Cancel Booking**
+```http
+POST /api/bookings/{bookingId}/cancel
+Authorization: Bearer {token}
+
+Response (200):
+{
+  "success": true,
+  "message": "Booking cancelled",
+  "refund": {
+    "amount": 1000,
+    "status": "processing"
+  }
+}
+```
+
+---
+
+## 5️⃣ EXPENSE SPLIT ENDPOINTS
+
+### **Create Expense Group (Split Payment)**
+```http
+POST /api/expenses/create
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "bookingId": "booking123",
+  "splits": [
+    { "userId": "user123", "amount": 250 }, // Person who paid
+    { "userId": "user456", "amount": 250 },
+    { "userId": "user789", "amount": 250 },
+    { "userId": "user101", "amount": 250 }
+  ]
+}
+
+Response (201):
+{
+  "success": true,
+  "expenseGroup": {
+    "id": "exp123",
+    "totalAmount": 1000,
+    "paidBy": "user123",
+    "splits": [...]
+  }
+}
+```
+
+### **Get Expense Details**
+```http
+GET /api/expenses/{expenseGroupId}
+Authorization: Bearer {token}
+
+Response (200):
+{
+  "success": true,
+  "expenseGroup": {
+    "id": "exp123",
+    "totalAmount": 1000,
+    "paidBy": {
+      "id": "user123",
+      "name": "John Doe"
+    },
+    "splits": [
+      {
+        "user": { "name": "Friend 1" },
+        "amount": 250,
+        "isPaid": false
+      },
+      {
+        "user": { "name": "Friend 2" },
+        "amount": 250,
+        "isPaid": true,
+        "paidAt": "2025-10-29T11:00:00Z"
+      }
+    ],
+    "settlements": [
+      {
+        "from": "user456",
+        "to": "user123",
+        "amount": 250,
+        "isPaid": false
+      }
+    ]
+  }
+}
+```
+
+### **Mark Split as Paid**
+```http
+POST /api/expenses/{expenseGroupId}/mark-paid
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "userId": "user456",
+  "paymentMethod": "upi",
+  "transactionId": "upi_txn_123"
+}
+
+Response (200):
+{
+  "success": true,
+  "message": "Payment marked as received"
+}
+```
+
+---
+
+## 6️⃣ PLAYER FINDER ENDPOINTS
+
+### **Create Player Request**
+```http
+POST /api/player-finder/create
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "boxId": "box123",
+  "matchDate": "2025-11-01",
+  "matchTime": "10:00",
+  "playersNeeded": 3,
+  "skillLevel": "intermediate",
+  "description": "Need 3 players for a friendly match"
+}
+
+Response (201):
+{
+  "success": true,
+  "playerRequest": {
+    "id": "pr123",
+    "playersNeeded": 3,
+    "currentPlayers": ["user123"]
+  }
+}
+```
+
+### **Join Player Request**
+```http
+POST /api/player-finder/{requestId}/join
+Authorization: Bearer {token}
+
+Response (200):
+{
+  "success": true,
+  "message": "Successfully joined the match"
+}
+```
+
+### **Get Available Player Requests**
+```http
+GET /api/player-finder/available?boxId=box123
+Authorization: Bearer {token}
+
+Response (200):
+{
+  "success": true,
+  "requests": [
+    {
+      "id": "pr123",
+      "box": {...},
+      "matchDate": "2025-11-01",
+      "playersNeeded": 3,
+      "currentPlayers": [...],
+      "spotsLeft": 2
+    }
+  ]
+}
+```
+
+---
+
+## 7️⃣ ADMIN ENDPOINTS
+
+### **Add Business Details (After Registration)**
+```http
+PUT /api/admin/business-details
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "businessName": "Champion Sports Arena",
+  "businessAddress": {
+    "street": "MG Road",
+    "city": "Rajkot",
+    "state": "Gujarat",
+    "pincode": "360001",
+    "fullAddress": "MG Road, Rajkot, Gujarat",
+    "location": {
+      "coordinates": [70.7887104, 22.28224]
+    }
+  },
+  "paymentDetails": {
+    "upiId": "admin@upi",
+    "accountHolderName": "Admin Name",
+    "accountNumber": "1234567890",
+    "ifscCode": "SBIN0001234",
+    "bankName": "State Bank of India",
+    "preferredMethod": "upi"
+  }
+}
+
+Response (200):
+{
+  "success": true,
+  "message": "Business details updated"
+}
+```
+
+### **Create Box**
+```http
+POST /api/admin/boxes/create
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "name": "Champion Cricket Box",
+  "description": "Best turf in Rajkot",
+  "location": {
+    "coordinates": [70.7887104, 22.28224]
+  },
+  "address": {
+    "street": "MG Road",
+    "city": "Rajkot",
+    "state": "Gujarat",
+    "pincode": "360001",
+    "fullAddress": "MG Road, Rajkot, Gujarat"
+  },
+  "pricePerHour": 500,
+  "courts": [
+    {
+      "courtNumber": 1,
+      "courtName": "Court A",
+      "surfaceType": "Artificial turf",
+      "isAvailable": true
+    }
+  ],
+  "amenities": [
+    { "name": "Parking", "available": true },
+    { "name": "Washroom", "available": true },
+    { "name": "Lighting", "available": true }
+  ],
+  "operatingHours": {
+    "monday": { "open": "06:00", "close": "22:00", "isClosed": false },
+    "tuesday": { "open": "06:00", "close": "22:00", "isClosed": false }
+    // ... other days
+  }
+}
+
+Response (201):
+{
+  "success": true,
+  "box": {
+    "id": "box123",
+    "name": "Champion Cricket Box",
+    "isActive": true
+  }
+}
+```
+
+### **Get Admin's Boxes**
+```http
+GET /api/admin/boxes
+Authorization: Bearer {token}
+
+Response (200):
+{
+  "success": true,
+  "boxes": [
+    {
+      "id": "box123",
+      "name": "Champion Cricket Box",
+      "totalBookings": 45,
+      "totalRevenue": 22500,
+      "averageRating": 4.5
+    }
+  ]
+}
+```
+
+### **Get Box Bookings (Admin View)**
+```http
+GET /api/admin/boxes/{boxId}/bookings?date=2025-11-01
+Authorization: Bearer {token}
+
+Response (200):
+{
+  "success": true,
+  "bookings": [
+    {
+      "id": "booking123",
+      "bookedBy": {
+        "name": "John Doe",
+        "phoneNumber": "9876543210"
+      },
+      "courtNumber": 1,
+      "startTime": "09:00",
+      "endTime": "11:00",
+      "totalAmount": 1000,
+      "status": "confirmed",
+      "participants": [...]
+    }
+  ]
+}
+```
+
+### **Update Box**
+```http
+PUT /api/admin/boxes/{boxId}
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "pricePerHour": 600,
+  "isActive": true
+}
+
+Response (200):
+{
+  "success": true,
+  "message": "Box updated successfully"
+}
+```
+
+### **Admin Dashboard Stats**
+```http
+GET /api/admin/dashboard
+Authorization: Bearer {token}
+
+Response (200):
+{
+  "success": true,
+  "stats": {
+    "totalBoxes": 3,
+    "totalBookings": 120,
+    "totalRevenue": 60000,
+    "todayBookings": 5,
+    "upcomingBookings": 15,
+    "pendingPayments": 2
+  }
+}
+```
+
+---
+
+## 8️⃣ REVIEW ENDPOINTS
+
+### **Add Review**
+```http
+POST /api/reviews/create
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "boxId": "box123",
+  "bookingId": "booking123",
+  "rating": 5,
+  "comment": "Excellent turf! Well maintained."
+}
+
+Response (201):
+{
+  "success": true,
+  "review": {
+    "id": "rev123",
+    "rating": 5,
+    "comment": "..."
+  }
+}
+```
+
+### **Get Box Reviews**
+```http
+GET /api/reviews/{boxId}
+
+Response (200):
+{
+  "success": true,
+  "reviews": [
+    {
+      "id": "rev123",
+      "user": {
+        "name": "John Doe"
+      },
+      "rating": 5,
+      "comment": "Excellent turf!",
+      "createdAt": "2025-10-29T10:00:00Z",
+      "adminResponse": {
+        "message": "Thank you for your feedback!",
+        "respondedAt": "2025-10-29T12:00:00Z"
+      }
+    }
+  ],
+  "averageRating": 4.5,
+  "totalReviews": 23
+}
+```
+
+---
+
+## 🔐 MIDDLEWARE & VALIDATION
+
+### **Authentication Middleware**
+```javascript
+// Protect routes that need authentication
+router.use(authMiddleware);
+
+// Check if user is verified
+router.use(verificationMiddleware);
+
+// Check if user is admin
+router.use(adminMiddleware);
+```
+
+### **Booking Validation Rules**
+```javascript
+// Before allowing booking:
+1. User must be verified (isVerified = true)
+2. Admin (box owner) must be verified (isVerified = true)
+3. Admin must be approved (isApproved = true) - optional
+4. Admin must have payment details filled
+5. Box must be active (isActive = true)
+6. Court must be available
+7. Time slot must be available
+8. Booking date must be in future
+```
+
+---
+
+## 📊 PAYMENT FLOW (Step by Step)
+
+```
+1. USER CREATES BOOKING
+   ↓
+   POST /api/bookings/create
+   ↓
+   Backend creates pending booking
+   ↓
+   Backend creates Razorpay order
+   ↓
+   Returns orderId to frontend
+
+2. FRONTEND OPENS RAZORPAY CHECKOUT
+   ↓
+   User enters payment details
+   ↓
+   Payment processed
+   ↓
+   Money goes to Admin's Razorpay account
+   ↓
+   Razorpay returns paymentId, signature
+
+3. FRONTEND CONFIRMS PAYMENT
+   ↓
+   POST /api/bookings/confirm-payment
+   ↓
+   Backend verifies signature
+   ↓
+   Updates booking status = 'confirmed'
+   ↓
+   Creates Transaction record
+   ↓
+   Sends notifications to User & Admin
+
+4. ADMIN RECEIVES MONEY
+   ↓
+   Money in Admin's Razorpay account
+   ↓
+   Auto-transfer to Admin's bank (Razorpay handles this)
+```
+
+---
+
+## 🚀 QUICK START SEQUENCE
+
+### **For User:**
+```
+1. POST /api/auth/register (role: user)
+2. GET /api/auth/verify-email?token=xxx
+3. PUT /api/user/profile (add nickname, location)
+4. GET /api/boxes/nearby
+5. GET /api/boxes/{boxId}
+6. POST /api/bookings/create
+7. [Razorpay Payment]
+8. POST /api/bookings/confirm-payment
+```
+
+### **For Admin:**
+```
+1. POST /api/auth/register (role: admin)
+2. GET /api/auth/verify-email?token=xxx
+3. PUT /api/admin/business-details
+4. POST /api/admin/boxes/create
+5. GET /api/admin/boxes/{boxId}/bookings
+```
+
+---
+
+## ✅ VALIDATION CHECKLIST
+
+### **Before Booking:**
+- ✅ User isVerified = true
+- ✅ Admin (box owner) isVerified = true
+- ✅ Admin paymentDetails exists
+- ✅ Box isActive = true
+- ✅ Time slot available
+
+### **Before Creating Box:**
+- ✅ User role = 'admin'
+- ✅ User isVerified = true
+- ✅ User paymentDetails filled
+
+### **Before Payment:**
+- ✅ Booking exists
+- ✅ Booking status = 'pending'
+- ✅ Payment not already completed
